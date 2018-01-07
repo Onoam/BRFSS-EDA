@@ -1,0 +1,179 @@
+---
+title: "Exploring the BRFSS data"
+author: Omer Noam
+output: 
+  html_document: 
+    fig_height: 4
+    highlight: pygments
+    theme: cerulean
+---
+
+## Setup
+
+### Load packages
+
+```{r load-packages, message = FALSE}
+library(ggplot2)
+library(dplyr)
+```
+
+### Load data
+
+```{r load-data}
+load("brfss2013.RData")
+```
+
+
+
+* * *
+
+## Part 1: Data
+### What is the BRFSS?
+The BRFSS (Behavioral Risk Factor Surveillance System) is an ongoing collaborative project between all 50 states in the US, as well as some participating territories. Its purpose is to measure behavioral risk factors that are linked with chronic disease, injuries, and so on of non-institutionalized adults in the United States. Examples for such factors include: Frequency of alcohol consumption, smoking, knowledge and prevention of HIV/AIDS, immunization, inadequate sleep, and seatbelt use. 
+
+The BRFSS is conducted as a survey, meaning it is an **observational study**, employing *random sampling* of the population (choosing a household at random, and a random adult from said household), but not *random assignment*, and is therefore  **not an experiment**. Due to this, the results of the survey and any conlusions reached from the data must be taken as implying **generalizabilty but not causality**. It is generalizable to the non-instutionalized population of the United States, but not to citizens of other countries (where healthcare and other environmental factors might be different).
+
+The BRFSS is especially subject to non-response bias, as a respondent can choose not to answer a question or to end the survey at any time.
+
+
+* * *
+
+## Part 2: Research questions
+
+**Research question 1:** Is there a correlation between height and weight?
+
+**Research question 2:** Is there a correlation between race and relative frequency of skin cancer? For this question we will also be using gender as a possible confounding factor
+
+**Research question 3:** Are women more likely than men to have concerns about being able to pay rent? For this question we used race as a confounding factor.
+
+
+* * *
+
+## Part 3: Exploratory data analysis
+
+
+
+
+**Research question 1:**
+We will first create a histogram of weights for men and women to visualize the difference in weights. Then we will plot the two variables and try to see if any correlation can be found.
+
+Some respondents gave their weight in pounds, and some in kilograms. 
+We start with the calculated weight in kilograms (WTKG3). This measurement was entered with implied decimal points (e.g. if a respondent weighs 65.8 kilograms, the eight entered was 6580) so we divide by 100 to get the true value. Then we plot two histograms, for male and female respondents.
+
+```{r create-tkg, warning=FALSE}
+brfss2013$tkg <- brfss2013$wtkg3 / 100 # Adjusting for weight being entered without decimal points
+brfss2013 %>%
+  filter(!is.na(sex)) %>%
+  ggplot() +
+  geom_histogram(aes(x=tkg, fill=sex), binwidth=10)
+```
+
+As we can see, the weight distribution is moderately right skewed, with men and women having different medians. The mode (peak of the graph) is very similar.
+We can also see that there is a smaller sample of women (Or at least women who gave their weight in the survey).
+Now to display the standard deviation, median, and mean themselves.
+
+```{r summarise-tkg}
+
+brfss2013 %>%
+  filter(!is.na(sex)) %>%
+  group_by(sex) %>%
+  summarise(median=median(tkg, na.rm=TRUE), mean=mean(tkg, na.rm=TRUE), sd=sd(tkg, na.rm=TRUE))
+
+```
+There is about 16kg difference in the median weight for men and women. The mean being higher than the median in both groups is representative of a right-skewed graph.
+
+To try to determine the correlation, we will generate a dot plot of height (in centimetres) on the X axis, and weight (in kilograms) on the Y axis. 
+
+```{r plot-height-weight, warning=FALSE}
+brfss2013 %>%
+  filter(!is.na(sex)) %>%
+  ggplot(aes(x=htm4, y=tkg)) + 
+  geom_bin2d(bins=200) +
+  coord_cartesian(xlim=c(0, 280)) +
+  facet_wrap(~sex) +
+  xlab('Height') +
+  ylab('Weight')
+
+```
+
+From this plot we can't visibly discern a strong correlation between the two variables. We conclude that there is probably no reason to study this matter further.
+
+```{r summarise-weight-difference, echo=FALSE, eval=FALSE}
+brfss2013 %>% 
+  select(tkg, X_totinda) %>%
+  group_by(X_totinda) %>%
+  summarise(mean=mean(tkg, na.rm=TRUE), size=n())
+
+```
+
+***
+
+
+**Research question 2:**
+
+For this question, we will summarise the percentage of members of every race (using the variable "X_imprace"), further subdivided by sex, who were told (presumably by a physician) that they have skin cancer (variable name "chcscncr").
+
+```{r summarise_skin_cancer}
+brfss2013 %>%
+  select(X_imprace, chcscncr, sex) %>%
+  filter(!is.na(X_imprace) & !is.na(sex)) %>%
+  group_by(X_imprace, sex) %>%
+  summarise(cancer_rate=round(mean(chcscncr=='Yes', na.rm=TRUE), digits=4), total=n())
+```
+
+We can already see a large disparity in the cancer rate between members of different races.
+
+
+```{r visualize-skin-cancer-race}
+brfss2013 %>%
+  select(X_imprace, chcscncr, sex) %>%
+  filter(!is.na(X_imprace) & !is.na(sex)) %>%
+  group_by(X_imprace, sex) %>%
+  summarise(cancer_positive=mean(chcscncr=='Yes', na.rm=TRUE), total=n()) %>%
+  ggplot(aes(x=X_imprace, y=cancer_positive, fill=sex)) +
+  geom_bar(position='dodge', stat='identity') +
+  labs(x='Race', y='Proportion of skin cancer in the population') + 
+  coord_flip()
+
+```
+
+We see that there is a **significant** difference in prevalence of skin cancer between members of different races. It also appears women are slightly less likely to suffer from skin cancer than men. This might be attributable to skin-color, but again, this dataset can only help us understand correlation, not causation.
+
+***
+
+**Research question 3:**
+
+For this question, we will use the X_imprace and sex variables again, as well as the variable "scntmony", which answers the question of how often did the respondent have concerns about being able to pay the rent/mortgage.The possible answers to this question are Always, Usually, Sometimes, Rarely, or Never. We chose to count participants who answered one of the three answers Always, Usually or Sometimes, as those who might have concerns about paying rent.
+
+```{r rent-concerns-numerical}
+rent_tbl <- brfss2013 %>%
+  select(scntmony, sex, X_imprace) %>%
+  filter(!is.na(scntmony) & !is.na(sex) & !is.na(X_imprace)) %>%
+  group_by(X_imprace, sex) %>%
+  summarise(size=n(), mean=mean(sapply(scntmony, is.element, c('Sometimes', 'Usually', 'Always'))))
+rent_tbl
+
+```
+
+We can begin to see a discrepancy, but the chart will help us visualise it.
+
+```{r plot_rent_concerns}
+rent_tbl %>%
+  ggplot(aes(x=X_imprace, fill=sex)) +
+  geom_col(aes(y=mean), position='dodge') +
+  coord_flip()
+```
+
+As we can see, in every racial group, females have a slightly to moderately higher rate of concern about paying rent.
+There is also a difference in the prevalence of concern about paying rent between races.
+
+```{r rent-concerns, eval=FALSE, echo=FALSE}
+brfss2013 %>% 
+  select(scntmony, sex, X_imprace) %>%
+  filter(!is.na(scntmony) & !is.na(sex) & !is.na(X_imprace)) %>%
+  ggplot(mapping=aes(x=scntmony, fill=sex)) +
+  geom_bar(position='dodge') +
+  coord_flip() + 
+  facet_wrap(~X_imprace, scales='free', nrow=4)
+```
+
